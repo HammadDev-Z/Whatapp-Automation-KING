@@ -15,7 +15,7 @@ const { serializeMessageId } = require('./message-handler');
 
 const HEADER = '‎👑ᴋɪɴɢᵝᵒˢˢ GAMING';
 const START_LINE = '🎉 Start To Work 🎉';
-const CLEARED_LINE = '✅ Thanks! All clear';
+const CLEARED_LINE = '✅ Thanks! All clear\nGop Gop';
 const STATUS_TITLE = '📊 Groups Status';
 const STATUS_COMMAND = '/calculate';
 const DEDUPE_LIMIT = 500;
