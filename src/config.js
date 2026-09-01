@@ -14,6 +14,7 @@ function loadConfig() {
     port: number('PORT', 3000),
     databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/whatsapp_codes',
     whatsappClientId: process.env.WHATSAPP_CLIENT_ID || 'code-distribution-bot',
+    calculateAdminGroupId: (process.env.CALCULATE_ADMIN_GROUP_ID || '').trim(),
     adminNumbers: process.env.ADMIN_NUMBERS || '',
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
     adminPassword: process.env.ADMIN_PASSWORD || '',

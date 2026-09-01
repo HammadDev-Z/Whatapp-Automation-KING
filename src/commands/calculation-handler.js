@@ -16,15 +16,42 @@ const { serializeMessageId } = require('./message-handler');
 const HEADER = '‎👑ᴋɪɴɢᵝᵒˢˢ GAMING';
 const START_LINE = '🎉 Start To Work 🎉';
 const CLEARED_LINE = '✅ Thanks! All clear';
+const STATUS_TITLE = '📊 Groups Status';
+const STATUS_COMMAND = '/calculate';
 const DEDUPE_LIMIT = 500;
 
-function createCalculationHandler({ logger } = {}) {
+function createCalculationHandler({ logger, client, adminGroupId } = {}) {
   const totalsByChat = new Map();
   const processedMessageIds = new Set();
+
+  // `/calculate` — only answered inside the configured admin/status group. Reports
+  // the current stored All Total for every group that has calculation data, using
+  // the group's live WhatsApp name (falling back to its ID if unavailable).
+  async function respondWithGroupsStatus(message) {
+    if (!adminGroupId || message.from !== adminGroupId) return;
+    const lines = [];
+    for (const [groupId, total] of totalsByChat) {
+      let name = groupId;
+      try {
+        const chat = client && (await client.getChatById(groupId));
+        if (chat && chat.name) name = chat.name;
+      } catch (error) {
+        logger?.warn?.('Calculation status: group name lookup failed', { groupId, error });
+      }
+      lines.push(`${name} : ${formatNumber(total)}`);
+    }
+    await message.reply(`${HEADER}\n\n${STATUS_TITLE}\n\n${lines.join('\n')}`);
+    logger?.info?.('Calculation status handled', { chatId: message.from, groups: lines.length });
+  }
 
   return async function handleCalculation(message) {
     try {
       if (!message || message.fromMe || typeof message.body !== 'string') return;
+
+      if (message.body.trim().toLowerCase() === STATUS_COMMAND) {
+        await respondWithGroupsStatus(message);
+        return;
+      }
 
       const parsed = calculate(message.body);
       if (!parsed) return;
