@@ -3,12 +3,16 @@
 // Pure arithmetic helper for the calculation handler.
 // A message counts as a calculation ONLY when the entire trimmed string is a
 // valid arithmetic expression built from numbers and the operators + - * /.
-// A single leading + or - is allowed; signs are never allowed after an operator
-// (so "3++3", "3**3", "3//3" are rejected). No spaces, letters, parentheses,
-// or anything else is permitted. Evaluation uses normal precedence: * and /
-// before + and -, each group left-to-right. eval() is never used.
+// It must be EITHER:
+//   * a single number carrying an explicit leading + or - sign ("+500", "-463.60"), OR
+//   * two or more numbers joined by operators ("500-83", "3+3", "4-82+89*6").
+// A bare unsigned single number ("500", "89") is NOT a calculation and is ignored.
+// Signs are never allowed after an operator (so "3++3", "3**3", "3//3" are
+// rejected). No spaces, letters, parentheses, or anything else is permitted.
+// Evaluation uses normal precedence: * and / before + and -, each group
+// left-to-right. eval() is never used.
 
-const EXPRESSION_PATTERN = /^[+-]?\d+(?:\.\d+)?(?:[+\-*/]\d+(?:\.\d+)?)*$/;
+const EXPRESSION_PATTERN = /^(?:[+-]\d+(?:\.\d+)?(?:[+\-*/]\d+(?:\.\d+)?)*|\d+(?:\.\d+)?(?:[+\-*/]\d+(?:\.\d+)?)+)$/;
 const LEADING_NUMBER_PATTERN = /^[+-]?\d+(?:\.\d+)?/;
 const OPERATOR_TERM_PATTERN = /^([+\-*/])(\d+(?:\.\d+)?)/;
 const MAX_LENGTH = 500;
