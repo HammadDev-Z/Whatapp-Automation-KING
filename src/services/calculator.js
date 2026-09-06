@@ -9,6 +9,9 @@
 // A bare unsigned single number ("500", "89") is NOT a calculation and is ignored.
 // Signs are never allowed after an operator (so "3++3", "3**3", "3//3" are
 // rejected). No spaces, letters, parentheses, or anything else is permitted.
+// "÷" (U+00F7) is accepted as a synonym for "/" (normalized before parsing, but
+// the reply still echoes the original text). "x"/"×" are deliberately NOT
+// operators here — they are reserved for the bot's own code-quantity shorthand.
 // Evaluation uses normal precedence: * and / before + and -, each group
 // left-to-right. eval() is never used.
 
@@ -36,9 +39,11 @@ function tokenize(expression) {
 function calculate(input) {
   if (typeof input !== 'string') return null;
   const expr = input.trim();
-  if (!expr || expr.length > MAX_LENGTH || !EXPRESSION_PATTERN.test(expr)) return null;
+  // "÷" is a division synonym; evaluate on a normalized copy but keep `expr` as received.
+  const normalized = expr.replace(/÷/g, '/');
+  if (!normalized || normalized.length > MAX_LENGTH || !EXPRESSION_PATTERN.test(normalized)) return null;
 
-  const tokens = tokenize(expr);
+  const tokens = tokenize(normalized);
   if (!tokens) return null;
   const { numbers, operators } = tokens;
 

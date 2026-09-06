@@ -15,13 +15,13 @@ function loadConfig() {
     databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/whatsapp_codes',
     whatsappClientId: process.env.WHATSAPP_CLIENT_ID || 'code-distribution-bot',
     calculateAdminGroupId: (process.env.CALCULATE_ADMIN_GROUP_ID || '').trim(),
+    lowStockAlertGroupId: (process.env.LOW_STOCK_ALERT_GROUP_ID || '').trim(),
     adminNumbers: process.env.ADMIN_NUMBERS || '',
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
     adminPassword: process.env.ADMIN_PASSWORD || '',
     sessionSecret: process.env.SESSION_SECRET || '',
     groupRateLimit: number('GROUP_RATE_LIMIT', 5),
     groupRateWindowMinutes: number('GROUP_RATE_WINDOW_MINUTES', 10),
-    maxCsvSizeMb: number('MAX_CSV_SIZE_MB', 5),
     maxCodesPerRequest: number('MAX_CODES_PER_REQUEST', 50),
     tagResponseDelayMinSeconds: number('TAG_RESPONSE_DELAY_MIN_SECONDS', 5),
     tagResponseDelayMaxSeconds: number('TAG_RESPONSE_DELAY_MAX_SECONDS', 10),
@@ -29,6 +29,9 @@ function loadConfig() {
   };
   if (config.tagResponseDelayMaxSeconds < config.tagResponseDelayMinSeconds) {
     throw new Error('TAG_RESPONSE_DELAY_MAX_SECONDS must be greater than or equal to TAG_RESPONSE_DELAY_MIN_SECONDS');
+  }
+  if (config.lowStockAlertGroupId && !config.lowStockAlertGroupId.endsWith('@g.us')) {
+    throw new Error('LOW_STOCK_ALERT_GROUP_ID must be a WhatsApp group id ending in @g.us');
   }
   if (config.env === 'production' && (!config.adminPassword || config.adminPassword.includes('replace-'))) {
     throw new Error('A strong ADMIN_PASSWORD is required in production');

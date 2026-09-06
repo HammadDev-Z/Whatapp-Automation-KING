@@ -2,10 +2,6 @@
 
 class GroupRepository {
   constructor(pool) { this.pool = pool; }
-  async isAllowed(groupId) {
-    const result = await this.pool.query('SELECT active FROM allowed_groups WHERE group_id=$1', [groupId]);
-    return Boolean(result.rowCount && result.rows[0].active);
-  }
   async set(groupId, groupName, active = true) {
     await this.pool.query(
       `INSERT INTO allowed_groups(group_id,group_name,active) VALUES($1,$2,$3)

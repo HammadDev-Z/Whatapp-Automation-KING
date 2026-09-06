@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseCommand } = require('../utilities/commands');
+const { lowStockThreshold, lowStockAlertMessage } = require('../utilities/low-stock');
 
 const HELP = 'Commands:\n/tag <category> [quantityx] - request one or more codes\n<category> x <quantity> - quantity shorthand (example: 2320x5)\n/help - show this help\n/groupid - show group ID (admin)\n/stock <category> - remaining stock (admin)\n/status - service status (admin)';
 
@@ -61,7 +62,7 @@ async function resolveSender(message, timeoutMs = 2000) {
   }
 }
 
-function createMessageHandler({ allocationService, categoryRepository, pool, isAdmin, rateLimiter, maxCodesPerRequest = 50, tagDelayMinSeconds = 5, tagDelayMaxSeconds = 10, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), random = Math.random, logger }) {
+function createMessageHandler({ allocationService, categoryRepository, pool, isAdmin, rateLimiter, maxCodesPerRequest = 50, tagDelayMinSeconds = 5, tagDelayMaxSeconds = 10, lowStockAlertGroupId = '', sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), random = Math.random, logger }) {
   const inFlight = new Set();
 
   return async function handleMessage(message) {
@@ -130,6 +131,10 @@ function createMessageHandler({ allocationService, categoryRepository, pool, isA
           : `❌ No unused ${category} codes are currently available.`);
         return;
       }
+      if (allocation.status === 'limit_reached') {
+        await message.reply(`❌ Daily limit reached for ${category} in this group. Try again after the next reset.`);
+        return;
+      }
 
       const issued = allocation.codes || [{ codeId: allocation.codeId, code: allocation.code }];
       let delivered = false;
@@ -155,6 +160,22 @@ function createMessageHandler({ allocationService, categoryRepository, pool, isA
           await message.reply(`❌ ${category} stock is finished. ${issued.length} codes were issued out of ${allocation.requestedQuantity} requested.`);
         } catch (error) {
           logger.warn?.('Failed to send stock-ended notice', { messageId, groupId, error });
+        }
+      }
+      // Low-stock alert: only after a confirmed delivery, and never allowed to
+      // affect the (already-committed) allocation/delivery flow — log and move on.
+      if (delivered && lowStockAlertGroupId && message.client) {
+        try {
+          const threshold = lowStockThreshold(category);
+          if (threshold !== null) {
+            const remaining = (await pool.query("SELECT count(*)::int AS count FROM codes WHERE category=$1 AND status='unused'", [category])).rows[0].count;
+            if (remaining < threshold) {
+              await message.client.sendMessage(lowStockAlertGroupId, lowStockAlertMessage(category, remaining, threshold));
+              logger.info('Low-stock alert sent', { category, remaining, threshold, messageId });
+            }
+          }
+        } catch (error) {
+          logger.error('Low-stock alert failed', { category, groupId, messageId, error });
         }
       }
     } catch (error) { logger.error('Message processing failed', { groupId, messageId, error }); }

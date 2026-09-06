@@ -19,8 +19,6 @@ class GroupRateLimiter {
     this.groups.set(groupId, recent);
     return true;
   }
-
-  clear() { this.groups.clear(); }
 }
 
 module.exports = { GroupRateLimiter };

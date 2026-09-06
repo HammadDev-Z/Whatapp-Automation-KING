@@ -14,9 +14,4 @@ function normalizePhone(value) {
   return raw.replace(/\D/g, '').replace(/^00/, '');
 }
 
-function makeAdminChecker(csv) {
-  const allowed = new Set(String(csv || '').split(',').map(normalizePhone).filter(Boolean));
-  return (candidate) => allowed.has(normalizePhone(candidate));
-}
-
-module.exports = { CATEGORY_PATTERN, normalizeCategory, normalizePhone, makeAdminChecker };
+module.exports = { CATEGORY_PATTERN, normalizeCategory, normalizePhone };

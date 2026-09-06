@@ -7,6 +7,9 @@ const { escapeHtml, layout } = require('../utilities/html');
 const { maskCode } = require('../utilities/mask');
 const { importCodeLines } = require('../services/code-importer');
 const { AdminRepository } = require('../services/admin-repository');
+const { GroupLimitRepository } = require('../services/group-limit-repository');
+const { CalculationRepository } = require('../services/calculation-repository');
+const { UsageReportingRepository } = require('../services/usage-reporting-repository');
 
 function table(headers, rows, className = '') {
   return `<div class="table-wrap ${escapeHtml(className)}"><table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.join('') || `<tr><td colspan="${headers.length}" class="empty-state">No records found</td></tr>`}</tbody></table></div>`;
@@ -74,6 +77,9 @@ async function activeCategories(pool) {
 function createDashboardRouter({ pool, config }) {
   const router = express.Router();
   const adminRepository = new AdminRepository(pool);
+  const groupLimitRepository = new GroupLimitRepository(pool);
+  const calculationRepository = new CalculationRepository(pool);
+  const usageReportingRepository = new UsageReportingRepository(pool);
   router.use(ensureCsrf);
 
   router.get('/login', (req, res) => res.send(layout('Login', `<section class="card narrow login-card"><div class="eyebrow">SECURE NODE ACCESS</div><h1>Administrator login</h1><p class="muted">Authenticate to manage inventory and inspect the immutable event ledger.</p><form method="post" action="/login"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><label>Username<input name="username" required autocomplete="username"></label><label>Password<input type="password" name="password" required autocomplete="current-password"></label><button>Connect to dashboard</button></form></section>`)));
@@ -96,11 +102,13 @@ function createDashboardRouter({ pool, config }) {
       const inventory = (await pool.query(
         `SELECT cc.category,cc.display_name,
           count(c.id) FILTER (WHERE c.status='unused')::int unused,
-          count(c.id) FILTER (WHERE c.status='used')::int used,
-          count(c.id) FILTER (WHERE c.delivery_status='failed')::int failed
+          count(c.id) FILTER (WHERE c.status='used' AND c.used_at >= (SELECT reset_at FROM usage_reporting_state WHERE id=1))::int used,
+          count(c.id) FILTER (WHERE c.delivery_status='failed')::int failed,
+          count(c.id)::int total
          FROM code_categories cc LEFT JOIN codes c ON c.category=cc.category
          WHERE cc.active=TRUE GROUP BY cc.category,cc.display_name ORDER BY ${CATEGORY_ORDER_EXPRESSION_CC}`
       )).rows;
+      const usageResetAt = await usageReportingRepository.resetAt();
       const totals = inventory.reduce((result, row) => ({
         unused: result.unused + row.unused,
         used: result.used + row.used,
@@ -111,12 +119,13 @@ function createDashboardRouter({ pool, config }) {
          FROM audit_logs a LEFT JOIN codes c ON c.id=a.code_id
          ORDER BY a.id DESC LIMIT 6`
       )).rows;
-      const inventoryRows = inventory.map((row) => `<tr><td><span class="category-token">${escapeHtml(row.display_name)}</span></td><td class="metric positive">${row.unused}</td><td class="metric">${row.used}</td><td class="metric ${row.failed ? 'negative' : ''}">${row.failed}</td><td>${row.unused + row.used}</td></tr>`);
+      const inventoryRows = inventory.map((row) => `<tr><td><span class="category-token">${escapeHtml(row.display_name)}</span></td><td class="metric positive">${row.unused}</td><td class="metric">${row.used}</td><td class="metric ${row.failed ? 'negative' : ''}">${row.failed}</td><td>${row.total}</td></tr>`);
       const recentBlocks = recent.map((event) => `<article class="ledger-block"><div class="block-index">BLOCK #${event.id}</div><div><strong>${escapeHtml(event.action.replaceAll('_', ' '))}</strong><small>${timestamp(event.created_at)} · ${escapeHtml(event.category || 'system')}</small></div><div>${escapeHtml(maskCode(event.code))}</div><div>${badge(event.delivery_status || 'recorded')}</div></article>`).join('') || '<p class="empty-state">The ledger has no events yet.</p>';
       const options = categories.map((item) => `<option value="${escapeHtml(item.category)}">${escapeHtml(item.display_name)}</option>`).join('');
       const content = `
         <section class="hero"><div><div class="eyebrow">LIVE DISTRIBUTION NODE</div><h1>Code inventory</h1><p>Manage stock and trace every code from import to WhatsApp delivery.</p></div><div class="node-status"><span></span> DATABASE ONLINE</div></section>
-        <section class="stats-grid"><article><span>Available supply</span><strong>${totals.unused}</strong><small>Ready to issue</small></article><article><span>Codes consumed</span><strong>${totals.used}</strong><small>Recorded on ledger</small></article><article><span>Delivery alerts</span><strong>${totals.failed}</strong><small>Require review</small></article><article><span>Active categories</span><strong>${categories.length}</strong><small>Configured networks</small></article></section>
+        <section class="stats-grid"><article><span>Available supply</span><strong>${totals.unused}</strong><small>Ready to issue</small></article><article><span>Codes consumed</span><strong>${totals.used}</strong><small>Since ${timestamp(usageResetAt)}</small></article><article><span>Delivery alerts</span><strong>${totals.failed}</strong><small>Require review</small></article><article><span>Active categories</span><strong>${categories.length}</strong><small>Configured networks</small></article></section>
+        <section class="panel"><div class="section-heading"><div><div class="eyebrow">USAGE REPORTING</div><h2>Usage baseline</h2></div><a href="/dashboard/usage">Open per-group usage report →</a></div><p class="muted">"Used" counts here and on the usage report are measured from <strong>${timestamp(usageResetAt)}</strong>. Resetting starts a fresh baseline and restarts every active group's daily-limit cycle; code inventory is never touched.</p><form method="post" action="/dashboard/usage/reset" onsubmit="return confirm('Reset all usage counters and every active group\\'s daily-limit window now?')"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><button type="submit" class="small-button danger">Reset all usage counters</button></form></section>
         <section class="dashboard-grid"><section class="panel inventory-panel"><div class="section-heading"><div><div class="eyebrow">SUPPLY BY NETWORK</div><h2>Inventory matrix</h2></div><a href="/dashboard/codes">View code lifecycle →</a></div>${table(['Category','Available','Used','Failed','Total'], inventoryRows)}</section><aside class="panel import-panel"><div class="eyebrow">MINT INVENTORY</div><h2>Add multiple codes</h2><p class="muted">Choose one category, then paste one code per line. Numbered lists are accepted automatically.</p><form method="post" action="/dashboard/import"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><label>Code category<select name="category" required>${options}</select></label><label>Codes<textarea name="codes" rows="14" required spellcheck="false" placeholder="code1&#10;code2&#10;code3"></textarea></label><button type="submit">Add codes to inventory</button><small>Duplicate codes are skipped. Complete code values never appear in dashboard history.</small></form></aside><section class="panel history-panel"><div class="section-heading"><div><div class="eyebrow">LATEST BLOCKS</div><h2>Recent ledger activity</h2></div><a href="/dashboard/audit">Open full ledger →</a></div><div class="ledger-chain">${recentBlocks}</div></section></section>`;
       res.send(layout('Inventory', content, req.session.csrfToken));
     } catch (error) { next(error); }
@@ -161,7 +170,7 @@ function createDashboardRouter({ pool, config }) {
   router.get('/dashboard/groups', async (req, res, next) => {
     try {
       const groups = (await pool.query('SELECT * FROM allowed_groups ORDER BY group_name')).rows;
-      const rows = groups.map((group) => `<tr><td>${escapeHtml(group.group_name)}</td><td><code>${escapeHtml(group.group_id)}</code></td><td>${badge(group.active ? 'active' : 'disabled')}</td><td><form method="post" action="/dashboard/groups/toggle"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><input type="hidden" name="group_id" value="${escapeHtml(group.group_id)}"><input type="hidden" name="active" value="${group.active ? 'false' : 'true'}"><button class="small-button ${group.active ? 'danger' : ''}">${group.active ? 'Disable' : 'Enable'}</button></form></td></tr>`);
+      const rows = groups.map((group) => `<tr><td>${escapeHtml(group.group_name)}</td><td><code>${escapeHtml(group.group_id)}</code></td><td>${badge(group.active ? 'active' : 'disabled')}</td><td><form method="post" action="/dashboard/groups/toggle"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><input type="hidden" name="group_id" value="${escapeHtml(group.group_id)}"><input type="hidden" name="active" value="${group.active ? 'false' : 'true'}"><button class="small-button ${group.active ? 'danger' : ''}">${group.active ? 'Disable' : 'Enable'}</button></form></td><td><a class="button secondary" href="/dashboard/groups/limits?group_id=${encodeURIComponent(group.group_id)}">Limits</a></td></tr>`);
       const addGroupForm = `
         <section id="group-add" class="card narrow group-add-card">
           <div class="eyebrow">REGISTER GROUP</div>
@@ -175,7 +184,172 @@ function createDashboardRouter({ pool, config }) {
           </form>
         </section>
       `;
-      res.send(layout('Groups', `<section class="hero compact"><div><div class="eyebrow">ACCESS CONTROL</div><h1>Authorized groups</h1><p>Only active groups can consume inventory.</p></div><a href="#group-add" class="button">Add group</a></section>${addGroupForm}${table(['Name','Group ID','State','Action'], rows)}`, req.session.csrfToken));
+      res.send(layout('Groups', `<section class="hero compact"><div><div class="eyebrow">ACCESS CONTROL</div><h1>Authorized groups</h1><p>Only active groups can consume inventory.</p></div><a href="#group-add" class="button">Add group</a></section>${addGroupForm}${table(['Name','Group ID','State','Action','Daily limits'], rows)}`, req.session.csrfToken));
+    } catch (error) { next(error); }
+  });
+
+  router.get('/dashboard/groups/limits', async (req, res, next) => {
+    try {
+      const groupId = String(req.query.group_id || '');
+      const group = (await pool.query('SELECT group_id, group_name FROM allowed_groups WHERE group_id=$1', [groupId])).rows[0];
+      if (!group) return res.status(404).send(layout('Group not found', `<section class="card narrow"><h1>Group not found</h1><a class="button" href="/dashboard/groups">Back to groups</a></section>`, req.session.csrfToken));
+      const { windowStart, rows } = await groupLimitRepository.listForGroup(groupId);
+      const limitRows = rows.map((row) => `<tr><td><span class="category-token">${escapeHtml(row.display_name)}</span></td><td><input type="number" min="1" step="1" name="limit_${escapeHtml(row.category)}" value="${row.daily_limit == null ? '' : row.daily_limit}" placeholder="unlimited"></td><td class="metric">${row.used}</td></tr>`);
+      const content = `
+        <section class="hero compact"><div><div class="eyebrow">DAILY QUOTA</div><h1>Daily limits — ${escapeHtml(group.group_name)}</h1><p>Per-category cap for <code>${escapeHtml(groupId)}</code>. Blank = unlimited. Current 24h cycle started ${timestamp(windowStart)}.</p></div><a class="button secondary" href="/dashboard/groups">Back to groups</a></section>
+        <section class="card">
+          <form method="post" action="/dashboard/groups/limits">
+            <input type="hidden" name="_csrf" value="${req.session.csrfToken}">
+            <input type="hidden" name="group_id" value="${escapeHtml(groupId)}">
+            ${table(['Category','Daily limit','Used this cycle'], limitRows)}
+            <button type="submit">Save limits</button>
+          </form>
+        </section>
+        <section class="card narrow">
+          <form method="post" action="/dashboard/groups/limits/reset-window">
+            <input type="hidden" name="_csrf" value="${req.session.csrfToken}">
+            <input type="hidden" name="group_id" value="${escapeHtml(groupId)}">
+            <button type="submit" class="small-button danger">Reset limit time now</button>
+            <small>Restarts only this group's 24h cycle from the current moment.</small>
+          </form>
+        </section>`;
+      res.send(layout('Group limits', content, req.session.csrfToken));
+    } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/groups/limits', verifyCsrf, async (req, res, next) => {
+    try {
+      const groupId = String(req.body.group_id || '');
+      const limits = {};
+      for (const [key, value] of Object.entries(req.body)) {
+        if (key.startsWith('limit_')) limits[key.slice('limit_'.length)] = value;
+      }
+      await groupLimitRepository.replaceLimits(groupId, limits);
+      res.redirect(`/dashboard/groups/limits?group_id=${encodeURIComponent(groupId)}`);
+    } catch (error) {
+      if (/daily limit|positive whole number/i.test(error.message)) {
+        return res.status(400).send(layout('Invalid limit', `<section class="card narrow"><h1>Limits not saved</h1><p>${escapeHtml(error.message)}</p><a class="button" href="/dashboard/groups">Back to groups</a></section>`, req.session.csrfToken));
+      }
+      next(error);
+    }
+  });
+
+  router.post('/dashboard/groups/limits/reset-window', verifyCsrf, async (req, res, next) => {
+    try {
+      const groupId = String(req.body.group_id || '');
+      await groupLimitRepository.resetWindow(groupId);
+      await pool.query('INSERT INTO audit_logs(action,group_id) VALUES($1,$2)', ['limit_window_reset', groupId]);
+      res.redirect(`/dashboard/groups/limits?group_id=${encodeURIComponent(groupId)}`);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/dashboard/calculations', async (req, res, next) => {
+    try {
+      const [balances, access] = await Promise.all([
+        calculationRepository.listBalances(),
+        calculationRepository.listAccessGroups()
+      ]);
+      const toggleForm = (action, groupId, active) => `<form method="post" action="${action}"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><input type="hidden" name="group_id" value="${escapeHtml(groupId)}"><input type="hidden" name="active" value="${active ? 'false' : 'true'}"><button class="small-button ${active ? 'danger' : ''}">${active ? 'Disable' : 'Enable'}</button></form>`;
+      const balanceRows = balances.map((row) => `<tr><td>${escapeHtml(row.group_name || '—')}</td><td><code>${escapeHtml(row.group_id)}</code></td><td class="metric">${escapeHtml(row.current_total)}</td><td>${badge(row.active ? 'active' : 'disabled')}</td><td>${toggleForm('/dashboard/calculations/groups/toggle', row.group_id, row.active)}</td></tr>`);
+      const accessRows = access.map((row) => `<tr><td>${escapeHtml(row.group_name || '—')}</td><td><code>${escapeHtml(row.group_id)}</code></td><td>${badge(row.active ? 'active' : 'disabled')}</td><td>${toggleForm('/dashboard/calculations/access/toggle', row.group_id, row.active)}</td></tr>`);
+      const envGroup = config.calculateAdminGroupId
+        ? `<p class="muted">Env <code>CALCULATE_ADMIN_GROUP_ID</code> always allowed: <code>${escapeHtml(config.calculateAdminGroupId)}</code></p>`
+        : `<p class="muted">Env <code>CALCULATE_ADMIN_GROUP_ID</code> is not set — only the groups below can run <code>/calculate</code>.</p>`;
+      const content = `
+        <section class="hero compact"><div><div class="eyebrow">CALCULATOR</div><h1>Calculations</h1><p>Tracked running-balance groups, and which groups may run <code>/calculate</code>.</p></div></section>
+        <section class="panel">
+          <div class="section-heading"><div><div class="eyebrow">RUNNING BALANCES</div><h2>Calculation groups</h2></div></div>
+          <p class="muted">Disabling a group only removes it from the <code>/calculate</code> report and grand total — its balance keeps updating on new calculations.</p>
+          ${table(['Name', 'Group ID', 'Running total', 'State', 'Action'], balanceRows)}
+          <form method="post" action="/dashboard/calculations/groups/register" class="filters">
+            <input type="hidden" name="_csrf" value="${req.session.csrfToken}">
+            <label>Group ID<input name="group_id" required maxlength="200" placeholder="120363...@g.us"></label>
+            <label>Name (optional)<input name="group_name" maxlength="100" placeholder="Ahmer Group"></label>
+            <button type="submit">Register group</button>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="section-heading"><div><div class="eyebrow">COMMAND ACCESS</div><h2>/calculate access</h2></div></div>
+          ${envGroup}
+          ${table(['Name', 'Group ID', 'State', 'Action'], accessRows)}
+          <form method="post" action="/dashboard/calculations/access/add" class="filters">
+            <input type="hidden" name="_csrf" value="${req.session.csrfToken}">
+            <label>Group ID<input name="group_id" required maxlength="200" placeholder="120363...@g.us"></label>
+            <label>Name (optional)<input name="group_name" maxlength="100" placeholder="Report group"></label>
+            <button type="submit">Verify group</button>
+          </form>
+        </section>`;
+      res.send(layout('Calculations', content, req.session.csrfToken));
+    } catch (error) { next(error); }
+  });
+
+  const requireGroupId = (req, res) => {
+    const groupId = String(req.body.group_id || '').trim();
+    if (!groupId) {
+      res.status(400).send(layout('Invalid group', `<section class="card narrow"><h1>Group ID is required</h1><a class="button" href="/dashboard/calculations">Back</a></section>`, req.session.csrfToken));
+      return null;
+    }
+    return groupId;
+  };
+
+  router.post('/dashboard/calculations/groups/register', verifyCsrf, async (req, res, next) => {
+    try {
+      const groupId = requireGroupId(req, res);
+      if (!groupId) return;
+      await calculationRepository.registerBalanceGroup(groupId, String(req.body.group_name || '').trim() || null);
+      res.redirect('/dashboard/calculations');
+    } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/calculations/groups/toggle', verifyCsrf, async (req, res, next) => {
+    try {
+      await calculationRepository.setBalanceGroupActive(String(req.body.group_id || '').trim(), req.body.active === 'true');
+      res.redirect('/dashboard/calculations');
+    } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/calculations/access/add', verifyCsrf, async (req, res, next) => {
+    try {
+      const groupId = requireGroupId(req, res);
+      if (!groupId) return;
+      await calculationRepository.addAccessGroup(groupId, String(req.body.group_name || '').trim() || null);
+      res.redirect('/dashboard/calculations');
+    } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/calculations/access/toggle', verifyCsrf, async (req, res, next) => {
+    try {
+      await calculationRepository.setAccessGroupActive(String(req.body.group_id || '').trim(), req.body.active === 'true');
+      res.redirect('/dashboard/calculations');
+    } catch (error) { next(error); }
+  });
+
+  router.get('/dashboard/usage', async (req, res, next) => {
+    try {
+      const groups = (await pool.query('SELECT group_id, group_name FROM allowed_groups ORDER BY group_name')).rows;
+      const selected = String(req.query.group_id || '');
+      const resetAt = await usageReportingRepository.resetAt();
+      const options = groups.map((g) => `<option value="${escapeHtml(g.group_id)}" ${selected === g.group_id ? 'selected' : ''}>${escapeHtml(g.group_name)}</option>`).join('');
+      let report = '<p class="empty-state">Pick a group to see its usage since the baseline.</p>';
+      if (selected) {
+        const group = groups.find((g) => g.group_id === selected);
+        const { rows, total } = await usageReportingRepository.groupUsageReport(selected);
+        const bodyRows = rows.map((row) => `<tr><td><span class="category-token">${escapeHtml(row.category)}</span></td><td class="metric">${row.used}</td></tr>`);
+        bodyRows.push(`<tr><td><strong>Total</strong></td><td class="metric"><strong>${total}</strong></td></tr>`);
+        report = `<h2>${escapeHtml(group ? group.group_name : selected)}</h2>${table(['Category', 'Codes requested since baseline'], bodyRows)}`;
+      }
+      const content = `
+        <section class="hero compact"><div><div class="eyebrow">USAGE REPORT</div><h1>Per-group usage</h1><p>Codes each group has requested since the baseline of ${timestamp(resetAt)}. Distinct from the event ledger.</p></div></section>
+        <form class="filters"><label>Group<select name="group_id" onchange="this.form.submit()">${selected ? '' : '<option value="">Select a group…</option>'}${options}</select></label><noscript><button>Show usage</button></noscript></form>
+        <section class="panel">${report}</section>`;
+      res.send(layout('Usage report', content, req.session.csrfToken));
+    } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/usage/reset', verifyCsrf, async (req, res, next) => {
+    try {
+      await usageReportingRepository.resetAllUsageCounters();
+      res.redirect('/dashboard');
     } catch (error) { next(error); }
   });
 

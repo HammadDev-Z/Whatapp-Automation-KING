@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const result = spawnSync(
   process.execPath,
-  ['--test', path.join('tests', 'allocation.integration.test.js')],
+  ['--test', '--test-concurrency=1'],
   {
     cwd: path.join(__dirname, '..'),
     env: { ...process.env, RUN_DB_TESTS: '1' },
