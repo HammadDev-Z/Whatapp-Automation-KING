@@ -18,7 +18,8 @@ const HEADER = '‎👑ᴋɪɴɢᵝᵒˢˢ GAMING';
 const START_LINE = '🎉 Start To Work 🎉';
 const CLEARED_LINE = '✅ Thanks! All clear\nGop Gop';
 const STATUS_TITLE = '📊 Groups Status';
-const STATUS_COMMAND = '/calculate';
+// Tolerate surrounding whitespace / bidi marks (WhatsApp adds them) / any case.
+const STATUS_PATTERN = /^[\s\u200e\u200f]*\/calculate[\s\u200e\u200f]*$/i;
 const ADMIN_ONLY_REPLY = '❌ This command is restricted to administrators.';
 // /setname <name>   |   /setname <id>@g.us <name>  (remote form only from the report group)
 const SETNAME_PATTERN = /^\/setname\s+(?:(\S+@g\.us)\s+)?(.+?)\s*$/i;
@@ -48,12 +49,27 @@ function createCalculationHandler({ logger, client, adminGroupId, calculationRep
     logger?.info?.('Calculation group name saved', { chatId: message.from, targetGroupId });
   }
 
-  // `/calculate` — only answered inside the configured admin/status group. Reports
-  // the current stored balance for every active group plus a grand total, using
-  // the group's saved name (see /setname), then its live WhatsApp name, then its ID.
+  // Is this chat allowed to run `/calculate`? The env-var report group OR any
+  // active row in calculate_access_groups. A DB error here (e.g. the table was
+  // never migrated) is logged loudly and treated as "not allowed" rather than
+  // silently killing the command.
+  async function calculateAllowed(chatId) {
+    if (adminGroupId && chatId === adminGroupId) return true;
+    try {
+      return await calculationRepository.isCalculateAllowed(chatId);
+    } catch (error) {
+      logger?.error?.('/calculate access check failed — is the calculate_access_groups table migrated?', { chatId, error });
+      return false;
+    }
+  }
+
+  // `/calculate` — answered only from the report group or a verified access group.
+  // Reports the current stored balance for every active group plus a grand total,
+  // using the group's saved name (see /setname), then its live WhatsApp name, then its ID.
   async function respondWithGroupsStatus(message) {
-    const allowed = (adminGroupId && message.from === adminGroupId)
-      || await calculationRepository.isCalculateAllowed(message.from);
+    const chatId = message.from;
+    const allowed = await calculateAllowed(chatId);
+    logger?.info?.('/calculate requested', { chatId, allowed });
     if (!allowed) return;
     const { rows, grandTotal } = await calculationRepository.calculateReport();
     const lines = [];
@@ -80,7 +96,7 @@ function createCalculationHandler({ logger, client, adminGroupId, calculationRep
       if (!message || message.fromMe || typeof message.body !== 'string') return;
 
       const trimmed = message.body.trim();
-      if (trimmed.toLowerCase() === STATUS_COMMAND) {
+      if (STATUS_PATTERN.test(message.body)) {
         await respondWithGroupsStatus(message);
         return;
       }

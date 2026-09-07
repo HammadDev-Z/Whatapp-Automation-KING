@@ -283,8 +283,13 @@ function createDashboardRouter({ pool, config }) {
     } catch (error) { next(error); }
   });
 
+  // WhatsApp group IDs never contain whitespace; strip stray spaces / newlines /
+  // zero-width & bidi marks that sneak in on copy-paste so the stored id matches
+  // exactly what the bot sees in message.from.
+  const normalizeGroupId = (raw) => String(raw || '').replace(/[\s\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, '');
+
   const requireGroupId = (req, res) => {
-    const groupId = String(req.body.group_id || '').trim();
+    const groupId = normalizeGroupId(req.body.group_id);
     if (!groupId) {
       res.status(400).send(layout('Invalid group', `<section class="card narrow"><h1>Group ID is required</h1><a class="button" href="/dashboard/calculations">Back</a></section>`, req.session.csrfToken));
       return null;
