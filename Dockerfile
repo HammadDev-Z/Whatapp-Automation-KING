@@ -9,4 +9,8 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium NODE_ENV=production
 RUN mkdir -p /app/.wwebjs_auth /app/.wwebjs_cache && chown -R node:node /app
 USER node
 EXPOSE 3000
-CMD ["node","src/index.js"]
+# Clear any stale Chromium SingletonLock left by a previous container that was
+# killed before whatsapp-web.js could shut down cleanly (e.g. on `up -d --build`
+# or `restart: unless-stopped`), then start normally. Self-healing: harmless
+# when there's nothing to clean, no-op if the auth volume is empty.
+CMD ["sh","-c","rm -f /app/.wwebjs_auth/session-*/Singleton* ; exec node src/index.js"]
