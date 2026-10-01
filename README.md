@@ -149,8 +149,8 @@ Scan the first QR from the logs. Restrict port 3000 with a firewall or bind it o
 Logical PostgreSQL backup (recommended):
 
 ```bash
-docker compose exec -T postgres pg_dump -U postgres -d whatsapp_codes -Fc > whatsapp_codes.dump
-docker compose exec -T postgres pg_restore -U postgres -d whatsapp_codes --clean --if-exists < whatsapp_codes.dump
+docker compose exec -T postgres pg_dump -U postgres -d whatsapp_codes_king -Fc > whatsapp_codes.dump
+docker compose exec -T postgres pg_restore -U postgres -d whatsapp_codes_king --clean --if-exists < whatsapp_codes.dump
 ```
 
 Back up the `whatsapp_auth` Docker volume using your host/volume backup system while the app container is stopped. Restoring only PostgreSQL does not restore the WhatsApp login; restoring only the session does not restore inventory. Encrypt backups and test restoration on a disposable host.
