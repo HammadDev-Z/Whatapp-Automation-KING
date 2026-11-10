@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { requireAuth, ensureCsrf, verifyCsrf, safeEqual } = require('../middleware/security');
 const { escapeHtml, layout } = require('../utilities/html');
 const { maskCode } = require('../utilities/mask');
-const { importCodeLines } = require('../services/code-importer');
+const { importCodeLines, shiftCodeLines } = require('../services/code-importer');
 const { AdminRepository } = require('../services/admin-repository');
 const { GroupLimitRepository } = require('../services/group-limit-repository');
 const { CalculationRepository } = require('../services/calculation-repository');
@@ -163,8 +163,22 @@ function createDashboardRouter({ pool, config }) {
       const categories = await activeCategories(pool);
       const options = categories.map((item) => `<option value="${escapeHtml(item.category)}" ${req.query.category === item.category ? 'selected' : ''}>${escapeHtml(item.display_name)}</option>`).join('');
       const filters = `<form class="filters"><label>Category<select name="category"><option value="">All categories</option>${options}</select></label><label>Status<select name="status"><option value="">All statuses</option>${['unused','used','reserved'].map((status) => `<option value="${status}" ${req.query.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select></label><button>Filter lifecycle</button><a class="button secondary" href="/dashboard/codes">Clear</a></form>`;
-      res.send(layout('Code lifecycle', `<section class="hero compact"><div><div class="eyebrow">ASSET REGISTRY</div><h1>Code lifecycle</h1><p>Masked inventory records with creation, usage, requester, group, and delivery state.</p></div></section>${filters}${table(['Record','Masked code','Category','Status','Delivery','Created UTC','Used UTC','Group','Requester'], rows, 'ledger-table')}${pagination('/dashboard/codes', { category: req.query.category || '', status: req.query.status || '' }, page, hasNext)}`, req.session.csrfToken));
+      const shiftForm = `<section class="card narrow shift-card"><div class="eyebrow">CORRECT INVENTORY</div><h2>Shift codes to another category</h2><p class="muted">Paste one code per line. Only codes still <strong>unused</strong> are moved — already-used codes are listed back so you can decide manually.</p><form method="post" action="/dashboard/codes/shift"><input type="hidden" name="_csrf" value="${req.session.csrfToken}"><label>Target category<select name="category" required>${options}</select></label><label>Codes<textarea name="codes" rows="8" required spellcheck="false" placeholder="code1&#10;code2&#10;code3"></textarea></label><button type="submit">Shift codes</button></form></section>`;
+      res.send(layout('Code lifecycle', `<section class="hero compact"><div><div class="eyebrow">ASSET REGISTRY</div><h1>Code lifecycle</h1><p>Masked inventory records with creation, usage, requester, group, and delivery state.</p></div></section>${filters}${table(['Record','Masked code','Category','Status','Delivery','Created UTC','Used UTC','Group','Requester'], rows, 'ledger-table')}${pagination('/dashboard/codes', { category: req.query.category || '', status: req.query.status || '' }, page, hasNext)}${shiftForm}`, req.session.csrfToken));
     } catch (error) { next(error); }
+  });
+
+  router.post('/dashboard/codes/shift', verifyCsrf, async (req, res, next) => {
+    try {
+      const result = await shiftCodeLines(pool, req.body.category, req.body.codes);
+      const errorSummary = result.errors.length ? `<details><summary>${result.errors.length} invalid line(s)</summary><ul>${result.errors.slice(0, 20).map((error) => `<li>${escapeHtml(error)}</li>`).join('')}</ul></details>` : '';
+      const notFoundSummary = result.notFound.length ? `<details><summary>${result.notFound.length} code(s) not found</summary><ul>${result.notFound.slice(0, 20).map((code) => `<li>${escapeHtml(maskCode(code))}</li>`).join('')}</ul></details>` : '';
+      const notUnusedSummary = result.notUnused.length ? `<details open><summary>${result.notUnused.length} code(s) skipped — not unused</summary><ul>${result.notUnused.slice(0, 20).map((entry) => `<li>${escapeHtml(maskCode(entry.code))} — still <strong>${escapeHtml(entry.status)}</strong> in category ${escapeHtml(entry.category)}</li>`).join('')}</ul><p class="muted">These were left exactly as they are. Reach out if any of these genuinely need manual correction.</p></details>` : '';
+      res.send(layout('Shift result', `<section class="card result-card"><div class="success-icon">✓</div><div class="eyebrow">BLOCK COMMITTED</div><h1>Codes shifted</h1><p>Target category <span class="category-token">${escapeHtml(result.category)}</span></p><div class="result-grid"><div><strong>${result.moved}</strong><span>Moved</span></div><div><strong>${result.skippedSameCategory}</strong><span>Already in category</span></div><div><strong>${result.notUnused.length}</strong><span>Skipped (not unused)</span></div><div><strong>${result.skippedNotFound}</strong><span>Not found</span></div></div>${notUnusedSummary}${notFoundSummary}${errorSummary}<a class="button" href="/dashboard/codes">Return to code lifecycle</a><a class="button secondary" href="/dashboard/audit">View ledger</a></section>`, req.session.csrfToken));
+    } catch (error) {
+      if (/category|code|line/i.test(error.message)) return res.status(400).send(layout('Shift failed', `<section class="card narrow"><h1>Nothing was shifted</h1><p>${escapeHtml(error.message)}</p><a class="button" href="/dashboard/codes">Return to code lifecycle</a></section>`, req.session.csrfToken));
+      next(error);
+    }
   });
 
   router.get('/dashboard/groups', async (req, res, next) => {

@@ -68,4 +68,59 @@ async function importCodeLines(pool, categoryInput, input) {
   }
 }
 
-module.exports = { validateCodeLines, importCodeLines };
+async function shiftCodeLines(pool, categoryInput, input) {
+  const categoryAlias = normalizeCategory(categoryInput);
+  if (!categoryAlias) throw new Error('Select a valid target category');
+  const validation = validateCodeLines(input);
+  const client = await pool.connect();
+  let moved = 0;
+  let skippedSameCategory = 0;
+  let skippedNotFound = 0;
+  const notFound = [];
+  const notUnused = [];
+
+  try {
+    await client.query('BEGIN');
+    const categoryResult = await client.query(
+      `SELECT a.category
+       FROM category_aliases a
+       JOIN code_categories c ON c.category=a.category
+       WHERE a.alias=$1 AND c.active=TRUE`,
+      [categoryAlias]
+    );
+    if (!categoryResult.rowCount) throw new Error('The selected target category is not active');
+    const targetCategory = categoryResult.rows[0].category;
+
+    for (const code of validation.rows) {
+      const existing = (await client.query('SELECT id,category,status FROM codes WHERE code=$1', [code])).rows[0];
+      if (!existing) { skippedNotFound += 1; notFound.push(code); continue; }
+      if (existing.category === targetCategory) { skippedSameCategory += 1; continue; }
+      if (existing.status !== 'unused') { notUnused.push({ code, status: existing.status, category: existing.category }); continue; }
+      await client.query('UPDATE codes SET category=$1 WHERE id=$2', [targetCategory, existing.id]);
+      await client.query(
+        `INSERT INTO audit_logs(action,category,code_id,delivery_status)
+         VALUES('category_corrected',$1,$2,NULL)`,
+        [targetCategory, existing.id]
+      );
+      moved += 1;
+    }
+    await client.query('COMMIT');
+    return {
+      category: targetCategory,
+      moved,
+      skippedSameCategory,
+      skippedNotFound,
+      notFound,
+      notUnused,
+      failed: validation.failed,
+      errors: validation.errors
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { validateCodeLines, importCodeLines, shiftCodeLines };
