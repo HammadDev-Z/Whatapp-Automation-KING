@@ -123,4 +123,65 @@ async function shiftCodeLines(pool, categoryInput, input) {
   }
 }
 
-module.exports = { validateCodeLines, importCodeLines, shiftCodeLines };
+async function shiftCodesByIds(pool, categoryInput, idsInput) {
+  const categoryAlias = normalizeCategory(categoryInput);
+  if (!categoryAlias) throw new Error('Select a valid target category');
+  const ids = [...new Set((Array.isArray(idsInput) ? idsInput : [idsInput])
+    .map((value) => Number.parseInt(value, 10))
+    .filter((value) => Number.isSafeInteger(value) && value > 0))];
+  if (!ids.length) throw new Error('Select at least one code to shift');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const categoryResult = await client.query(
+      `SELECT a.category
+       FROM category_aliases a
+       JOIN code_categories c ON c.category=a.category
+       WHERE a.alias=$1 AND c.active=TRUE`,
+      [categoryAlias]
+    );
+    if (!categoryResult.rowCount) throw new Error('The selected target category is not active');
+    const targetCategory = categoryResult.rows[0].category;
+
+    const existing = (await client.query(
+      'SELECT id,category,status FROM codes WHERE id=ANY($1::bigint[])',
+      [ids]
+    )).rows;
+    const byId = new Map(existing.map((row) => [row.id, row]));
+
+    let skippedSameCategory = 0;
+    const notUnused = [];
+    const moveIds = [];
+    for (const id of ids) {
+      const row = byId.get(id);
+      if (!row) continue; // selection went stale (page refreshed/edited elsewhere); ignore silently
+      if (row.category === targetCategory) { skippedSameCategory += 1; continue; }
+      if (row.status !== 'unused') { notUnused.push({ id, status: row.status, category: row.category }); continue; }
+      moveIds.push(id);
+    }
+
+    let moved = 0;
+    if (moveIds.length) {
+      await client.query('UPDATE codes SET category=$1 WHERE id=ANY($2::bigint[])', [targetCategory, moveIds]);
+      for (const id of moveIds) {
+        await client.query(
+          `INSERT INTO audit_logs(action,category,code_id,delivery_status)
+           VALUES('category_corrected',$1,$2,NULL)`,
+          [targetCategory, id]
+        );
+      }
+      moved = moveIds.length;
+    }
+
+    await client.query('COMMIT');
+    return { category: targetCategory, moved, skippedSameCategory, notUnused };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { validateCodeLines, importCodeLines, shiftCodeLines, shiftCodesByIds };
