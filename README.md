@@ -69,6 +69,17 @@ npm run groups -- enable "120363000000000000@g.us"
 
 Messages from the bot, direct chats, malformed commands, and duplicate message IDs never allocate inventory. Rate limits are per group and configured with `GROUP_RATE_LIMIT` and `GROUP_RATE_WINDOW_MINUTES`.
 
+### Calculator currency labeling & broadcasts
+
+| Command | Who / where | Result |
+|---|---|---|
+| `/pkr`, `/usdt` (bare) | Configured administrator, any group | Labels that group's currency as PKR/USDT. Never defaults a group and never touches its running total — a group stays unlabeled until an admin runs this. |
+| `/pkr <message>`, `/usdt <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Sends `<message>` to every active group labeled with that currency (never unlabeled groups, never the control group itself). |
+| `/account <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Sends `<message>` plus that recipient's own current running balance to every active, currency-labeled group (either currency). |
+| `/account pkr <message>`, `/account usdt <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Same as `/account <message>`, restricted to groups labeled with that one currency. |
+
+Sent from anywhere other than `CURRENCY_BROADCAST_GROUP_ID`, the broadcast forms (`/pkr <message>`, `/usdt <message>`, `/account ...`) are silently ignored, even for an administrator — only the bare `/pkr`/`/usdt` labeling works outside that group. A broadcast sends to one group at a time with a random delay between sends (`BROADCAST_DELAY_MIN_SECONDS` / `BROADCAST_DELAY_MAX_SECONDS`, never before the first send), and each `/account` recipient's balance is read immediately before that specific send — never from a snapshot taken when the broadcast started — so a calculation posted mid-broadcast is never missed. A failed send to one group is logged and does not stop the rest of the broadcast.
+
 ## CSV imports
 
 The only accepted columns are required `category` and `code` values (extra columns are ignored). Active categories are `830`, `2320`, `5150` (alias `5k`), `13k`, `27k`, and `56k`. Values are trimmed, aliases resolved, blank/invalid/unsupported rows rejected, duplicates within the file skipped, and existing database codes skipped. The import transaction either commits its inserts or rolls back on a database error. Reports show totals and row errors, never all code values.

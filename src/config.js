@@ -16,6 +16,7 @@ function loadConfig() {
     whatsappClientId: process.env.WHATSAPP_CLIENT_ID || 'code-distribution-bot',
     calculateAdminGroupId: (process.env.CALCULATE_ADMIN_GROUP_ID || '').trim(),
     lowStockAlertGroupId: (process.env.LOW_STOCK_ALERT_GROUP_ID || '').trim(),
+    currencyBroadcastGroupId: (process.env.CURRENCY_BROADCAST_GROUP_ID || '').trim(),
     adminNumbers: process.env.ADMIN_NUMBERS || '',
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
     adminPassword: process.env.ADMIN_PASSWORD || '',
@@ -25,13 +26,21 @@ function loadConfig() {
     maxCodesPerRequest: number('MAX_CODES_PER_REQUEST', 50),
     tagResponseDelayMinSeconds: number('TAG_RESPONSE_DELAY_MIN_SECONDS', 5),
     tagResponseDelayMaxSeconds: number('TAG_RESPONSE_DELAY_MAX_SECONDS', 10),
+    broadcastDelayMinSeconds: number('BROADCAST_DELAY_MIN_SECONDS', 10),
+    broadcastDelayMaxSeconds: number('BROADCAST_DELAY_MAX_SECONDS', 15),
     reconnectDelayMs: number('WHATSAPP_RECONNECT_DELAY_MS', 10000)
   };
   if (config.tagResponseDelayMaxSeconds < config.tagResponseDelayMinSeconds) {
     throw new Error('TAG_RESPONSE_DELAY_MAX_SECONDS must be greater than or equal to TAG_RESPONSE_DELAY_MIN_SECONDS');
   }
+  if (config.broadcastDelayMaxSeconds < config.broadcastDelayMinSeconds) {
+    throw new Error('BROADCAST_DELAY_MAX_SECONDS must be greater than or equal to BROADCAST_DELAY_MIN_SECONDS');
+  }
   if (config.lowStockAlertGroupId && !config.lowStockAlertGroupId.endsWith('@g.us')) {
     throw new Error('LOW_STOCK_ALERT_GROUP_ID must be a WhatsApp group id ending in @g.us');
+  }
+  if (config.currencyBroadcastGroupId && !config.currencyBroadcastGroupId.endsWith('@g.us')) {
+    throw new Error('CURRENCY_BROADCAST_GROUP_ID must be a WhatsApp group id ending in @g.us');
   }
   if (config.env === 'production' && (!config.adminPassword || config.adminPassword.includes('replace-'))) {
     throw new Error('A strong ADMIN_PASSWORD is required in production');

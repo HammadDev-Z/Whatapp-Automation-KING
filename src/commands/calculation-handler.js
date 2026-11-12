@@ -12,7 +12,7 @@
 // cleared; the balance simply stays at 0 and the next calculation builds on it.
 
 const { calculate, formatNumber } = require('../services/calculator');
-const { serializeMessageId, resolveSender } = require('./message-handler');
+const { serializeMessageId, resolveSender, randomDelayMs } = require('./message-handler');
 
 const HEADER = '‎👑ᴋɪɴɢᵝᵒˢˢ GAMING';
 const START_LINE = '🎉 Start To Work 🎉';
@@ -23,8 +23,91 @@ const STATUS_PATTERN = /^[\s\u200e\u200f]*\/calculate[\s\u200e\u200f]*$/i;
 const ADMIN_ONLY_REPLY = '❌ This command is restricted to administrators.';
 // /setname <name>   |   /setname <id>@g.us <name>  (remote form only from the report group)
 const SETNAME_PATTERN = /^\/setname\s+(?:(\S+@g\.us)\s+)?(.+?)\s*$/i;
+const CURRENCY_LABELS = { pkr: 'PKR', usdt: 'USDT' };
+// /pkr | /usdt  — bare (group 2 absent) sets the group's currency; with a
+// trailing message it's the broadcast form. "/pkrhello" matches neither: the
+// trailing anchor needs whitespace-or-end right after the word, so it's left
+// unrecognized, exactly like any other malformed command.
+const CURRENCY_COMMAND_PATTERN = /^[\s\u200e\u200f]*\/(pkr|usdt)(?:[\s\u200e\u200f]+(.+))?[\s\u200e\u200f]*$/is;
+// /account [pkr|usdt] <message> — the optional currency token requires a word
+// boundary right after it, so "/account pkroffer" fails that token match and
+// falls through to being parsed as a plain message ("pkroffer...").
+const ACCOUNT_PATTERN = /^[\s\u200e\u200f]*\/account(?:[\s\u200e\u200f]+(pkr|usdt)\b)?(?:[\s\u200e\u200f]+(.+))?[\s\u200e\u200f]*$/is;
 
-function createCalculationHandler({ logger, client, adminGroupId, calculationRepository, isAdmin } = {}) {
+function pluralize(count, noun) {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+function createCalculationHandler({
+  logger, client, adminGroupId, calculationRepository, isAdmin,
+  currencyBroadcastGroupId = '', broadcastDelayMinSeconds = 10, broadcastDelayMaxSeconds = 15,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), random = Math.random
+} = {}) {
+  // Shared by the flat /pkr,/usdt broadcasts and the personalized /account
+  // one so the "wait between sends, never before the first" pacing isn't
+  // duplicated. `send(groupId)` is called fresh for each recipient — any
+  // balance read it does happens at that moment, never from an earlier
+  // snapshot taken before the broadcast's delays ran.
+  async function broadcastWithPacing(groupIds, send) {
+    let sent = 0;
+    for (let index = 0; index < groupIds.length; index += 1) {
+      if (index > 0) await sleep(randomDelayMs(broadcastDelayMinSeconds, broadcastDelayMaxSeconds, random));
+      try {
+        await send(groupIds[index]);
+        sent += 1;
+      } catch (error) {
+        logger?.error?.('Broadcast send failed', { groupId: groupIds[index], error });
+      }
+    }
+    return sent;
+  }
+
+  async function checkAdmin(message) {
+    return Boolean(await Promise.resolve(isAdmin ? isAdmin(await resolveSender(message)) : false));
+  }
+
+  // /pkr | /usdt — bare form labels the current group; with a trailing
+  // message it's the flat broadcast form, restricted to the control group.
+  async function handleCurrencyCommand(message, currency, broadcastText) {
+    const label = CURRENCY_LABELS[currency];
+    if (broadcastText) {
+      if (!currencyBroadcastGroupId || message.from !== currencyBroadcastGroupId) return; // wrong group: silent, like a malformed command
+      if (!(await checkAdmin(message))) { await message.reply(ADMIN_ONLY_REPLY); return; }
+      const groupIds = (await calculationRepository.listGroupIdsByCurrency(currency))
+        .filter((groupId) => groupId !== currencyBroadcastGroupId);
+      const sent = await broadcastWithPacing(groupIds, (groupId) => client.sendMessage(groupId, broadcastText));
+      await message.reply(`✅ Broadcast sent to ${pluralize(sent, `${label} group`)}.`);
+      logger?.info?.('Currency broadcast sent', { currency, targeted: groupIds.length, sent });
+      return;
+    }
+    if (!(await checkAdmin(message))) { await message.reply(ADMIN_ONLY_REPLY); return; }
+    await calculationRepository.setCurrency(message.from, currency);
+    await message.reply(`✅ Currency set to ${label}`);
+    logger?.info?.('Group currency set', { groupId: message.from, currency });
+  }
+
+  // /account [pkr|usdt] <message> — always a broadcast, restricted to the
+  // control group; appends each recipient's own CURRENT balance, read fresh
+  // right before that recipient's send (see broadcastWithPacing above).
+  async function handleAccount(message, currencyToken, rawText) {
+    if (!currencyBroadcastGroupId || message.from !== currencyBroadcastGroupId) return;
+    if (!(await checkAdmin(message))) { await message.reply(ADMIN_ONLY_REPLY); return; }
+    const text = (rawText || '').trim();
+    if (!text) {
+      await message.reply('Usage: /account <message>   (or  /account pkr <message>  /  /account usdt <message>)');
+      return;
+    }
+    const currency = currencyToken ? currencyToken.toLowerCase() : null;
+    const groupIds = (await calculationRepository.listGroupIdsByCurrency(currency))
+      .filter((groupId) => groupId !== currencyBroadcastGroupId);
+    const sent = await broadcastWithPacing(groupIds, async (groupId) => {
+      const total = await calculationRepository.getCurrentTotal(groupId);
+      const amount = formatNumber(Number(total ?? 0));
+      await client.sendMessage(groupId, `${text}\n\nYour pending balance: ${amount}`);
+    });
+    await message.reply(`✅ Account details sent to ${pluralize(sent, 'group')}.`);
+    logger?.info?.('Account broadcast sent', { currency, targeted: groupIds.length, sent });
+  }
   // `/setname` — admin-only, gated exactly like /groupid, /stock, /status
   // (same injected `isAdmin` registry check + shared `resolveSender`).
   async function handleSetName(message, targetArg, nameArg) {
@@ -103,6 +186,18 @@ function createCalculationHandler({ logger, client, adminGroupId, calculationRep
       if (/^\/setname\b/i.test(trimmed)) {
         const match = trimmed.match(SETNAME_PATTERN);
         await handleSetName(message, match ? match[1] || null : null, match ? match[2] : null);
+        return;
+      }
+      const currencyMatch = message.body.match(CURRENCY_COMMAND_PATTERN);
+      if (currencyMatch) {
+        const currency = currencyMatch[1].toLowerCase();
+        const broadcastText = currencyMatch[2] ? currencyMatch[2].trim() : '';
+        await handleCurrencyCommand(message, currency, broadcastText);
+        return;
+      }
+      const accountMatch = message.body.match(ACCOUNT_PATTERN);
+      if (accountMatch) {
+        await handleAccount(message, accountMatch[1] || null, accountMatch[2] || '');
         return;
       }
 

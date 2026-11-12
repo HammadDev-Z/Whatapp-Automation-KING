@@ -80,6 +80,44 @@ class CalculationRepository {
     }
   }
 
+  // --- Currency labeling & broadcasts (/pkr, /usdt, /account) --------------
+  // A group's currency stays NULL ("unset") until an admin explicitly runs
+  // /pkr or /usdt in it — this upsert never defaults it and never touches
+  // current_total (that column is simply absent from the UPDATE SET clause).
+  async setCurrency(groupId, currency) {
+    await this.pool.query(
+      `INSERT INTO calculation_balances(group_id, currency) VALUES($1,$2)
+       ON CONFLICT (group_id) DO UPDATE SET currency=EXCLUDED.currency, updated_at=NOW()`,
+      [groupId, currency]
+    );
+  }
+
+  // Target group IDs for a broadcast: active groups labeled `currency`, or —
+  // when `currency` is omitted — every active group labeled with EITHER
+  // currency (never an unset/NULL group). IDs only; each recipient's balance
+  // is read fresh immediately before it is actually sent (see getCurrentTotal
+  // and createCalculationHandler's broadcastWithPacing), never from this list.
+  async listGroupIdsByCurrency(currency) {
+    const result = currency
+      ? await this.pool.query(
+          'SELECT group_id FROM calculation_balances WHERE active=TRUE AND currency=$1 ORDER BY created_at, group_id',
+          [currency]
+        )
+      : await this.pool.query(
+          `SELECT group_id FROM calculation_balances WHERE active=TRUE AND currency IS NOT NULL ORDER BY created_at, group_id`
+        );
+    return result.rows.map((row) => row.group_id);
+  }
+
+  // A single fresh balance read for one group, used right before sending a
+  // personalized /account message — deliberately not part of a bulk query so
+  // a slow broadcast can never hand out a stale balance (see section 4 of the
+  // feature spec / the matching integration test).
+  async getCurrentTotal(groupId) {
+    const result = await this.pool.query('SELECT current_total FROM calculation_balances WHERE group_id=$1', [groupId]);
+    return result.rows[0] ? result.rows[0].current_total : null;
+  }
+
   // --- Dashboard "Calculation groups" panel ---------------------------------
   // Every tracked group (active AND disabled). Disabling only hides a group from
   // the /calculate report; its balance keeps updating on new calculations.
