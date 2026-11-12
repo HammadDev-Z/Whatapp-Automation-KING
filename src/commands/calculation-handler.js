@@ -33,6 +33,8 @@ const CURRENCY_COMMAND_PATTERN = /^[\s\u200e\u200f]*\/(pkr|usdt)(?:[\s\u200e\u20
 // boundary right after it, so "/account pkroffer" fails that token match and
 // falls through to being parsed as a plain message ("pkroffer...").
 const ACCOUNT_PATTERN = /^[\s\u200e\u200f]*\/account(?:[\s\u200e\u200f]+(pkr|usdt)\b)?(?:[\s\u200e\u200f]+(.+))?[\s\u200e\u200f]*$/is;
+// /null \u2014 bare only, resets a group back to unset (excluded from /pkr, /usdt, /account).
+const NULL_PATTERN = /^[\s\u200e\u200f]*\/null[\s\u200e\u200f]*$/i;
 
 function pluralize(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -108,6 +110,18 @@ function createCalculationHandler({
     await message.reply(`✅ Account details sent to ${pluralize(sent, 'group')}.`);
     logger?.info?.('Account broadcast sent', { currency, targeted: groupIds.length, sent });
   }
+
+  // /null — admin-only, bare, any group. Resets the current group's currency
+  // back to unset so it is excluded from future /pkr, /usdt, and /account
+  // broadcasts, same as a group that was never labeled. Never touches the
+  // running total (setCurrency only ever updates the currency column).
+  async function handleNull(message) {
+    if (!(await checkAdmin(message))) { await message.reply(ADMIN_ONLY_REPLY); return; }
+    await calculationRepository.setCurrency(message.from, null);
+    await message.reply('✅ Currency reset — this group is now unset');
+    logger?.info?.('Group currency reset to unset', { groupId: message.from });
+  }
+
   // `/setname` — admin-only, gated exactly like /groupid, /stock, /status
   // (same injected `isAdmin` registry check + shared `resolveSender`).
   async function handleSetName(message, targetArg, nameArg) {
@@ -198,6 +212,10 @@ function createCalculationHandler({
       const accountMatch = message.body.match(ACCOUNT_PATTERN);
       if (accountMatch) {
         await handleAccount(message, accountMatch[1] || null, accountMatch[2] || '');
+        return;
+      }
+      if (NULL_PATTERN.test(message.body)) {
+        await handleNull(message);
         return;
       }
 

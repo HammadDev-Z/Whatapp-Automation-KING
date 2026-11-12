@@ -74,6 +74,7 @@ Messages from the bot, direct chats, malformed commands, and duplicate message I
 | Command | Who / where | Result |
 |---|---|---|
 | `/pkr`, `/usdt` (bare) | Configured administrator, any group | Labels that group's currency as PKR/USDT. Never defaults a group and never touches its running total — a group stays unlabeled until an admin runs this. |
+| `/null` (bare) | Configured administrator, any group | Resets that group's currency back to unset — excluded from future `/pkr`, `/usdt`, and `/account` broadcasts, same as a group that was never labeled. Never touches the running total. |
 | `/pkr <message>`, `/usdt <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Sends `<message>` to every active group labeled with that currency (never unlabeled groups, never the control group itself). |
 | `/account <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Sends `<message>` plus that recipient's own current running balance to every active, currency-labeled group (either currency). |
 | `/account pkr <message>`, `/account usdt <message>` | Configured administrator, `CURRENCY_BROADCAST_GROUP_ID` only | Same as `/account <message>`, restricted to groups labeled with that one currency. |

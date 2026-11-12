@@ -90,6 +90,39 @@ test('bare /pkr never touches an existing running total', async () => {
   assert.equal(repo.groups.get('G1@g.us').total, 500);
 });
 
+test('/null resets a labeled group back to unset and excludes it from future broadcasts', async () => {
+  const repo = fakeRepo({ 'G1@g.us': { currency: 'pkr', active: true, total: 50 } });
+  const { handler } = harness({ repo });
+  const text = await send(handler, { from: 'G1@g.us', body: '/null' });
+  assert.equal(text, '✅ Currency reset — this group is now unset');
+  assert.equal(repo.groups.get('G1@g.us').currency, null);
+  assert.equal(repo.groups.get('G1@g.us').total, 50, '/null must never touch the running total');
+  assert.deepEqual(await repo.listGroupIdsByCurrency('pkr'), []);
+});
+
+test('/null tolerates mixed case and extra whitespace, and ignores anything attached', async () => {
+  const repo = fakeRepo({ 'G1@g.us': { currency: 'usdt', active: true, total: 0 } });
+  const { handler } = harness({ repo });
+  assert.equal(await send(handler, { from: 'G1@g.us', body: '  /NULL  ' }), '✅ Currency reset — this group is now unset');
+  assert.equal(repo.groups.get('G1@g.us').currency, null);
+});
+
+test('/null is admin-gated and a non-admin leaves the currency unchanged', async () => {
+  const repo = fakeRepo({ 'G1@g.us': { currency: 'pkr', active: true, total: 0 } });
+  const { handler } = harness({ repo, admins: ['999'] });
+  const text = await send(handler, { from: 'G1@g.us', author: '1@c.us', body: '/null' });
+  assert.equal(text, '❌ This command is restricted to administrators.');
+  assert.equal(repo.groups.get('G1@g.us').currency, 'pkr');
+});
+
+test('/nullify and other attached text are not recognized as /null', async () => {
+  const repo = fakeRepo({ 'G1@g.us': { currency: 'pkr', active: true, total: 0 } });
+  const { handler } = harness({ repo });
+  assert.equal(await send(handler, { from: 'G1@g.us', body: '/nullify' }), null);
+  assert.equal(await send(handler, { from: 'G1@g.us', body: '/null extra' }), null);
+  assert.equal(repo.groups.get('G1@g.us').currency, 'pkr');
+});
+
 test('unrelated text is not recognized at all: /usd, bare "pkr", "/pkrhello"', async () => {
   const { handler, repo } = harness();
   for (const body of ['/usd', 'pkr', '/pkrhello', '/usdtoffer']) {
