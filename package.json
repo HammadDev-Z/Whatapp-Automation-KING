@@ -4,7 +4,9 @@
   "description": "Transactional WhatsApp Web code distribution bot",
   "main": "src/index.js",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -16,15 +18,14 @@
     "check": "node --check src/index.js && node --check src/app.js"
   },
   "dependencies": {
-    "csv-parse": "^5.5.6",
     "connect-pg-simple": "^10.0.0",
+    "csv-parse": "^5.5.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
     "multer": "^2.0.2",
     "pg": "^8.12.0",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.26.0"
-  },
-  "devDependencies": {}
+    "whatsapp-web.js": "^1.34.8"
+  }
 }
