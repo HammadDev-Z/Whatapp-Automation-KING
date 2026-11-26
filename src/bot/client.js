@@ -4,7 +4,7 @@ const qrcode=require('qrcode-terminal');
 const {Client,LocalAuth}=require('whatsapp-web.js');
 const {createCalculationHandler}=require('../commands/calculation-handler');
 function createWhatsAppBot({clientId,messageHandler,state,logger,reconnectDelayMs,calculateAdminGroupId,calculationRepository,isAdmin,currencyBroadcastGroupId,broadcastDelayMinSeconds,broadcastDelayMaxSeconds}){
- const client=new Client({authStrategy:new LocalAuth({clientId,dataPath:path.join(process.cwd(),'.wwebjs_auth')}),puppeteer:{headless:true,executablePath:process.env.PUPPETEER_EXECUTABLE_PATH||undefined,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']}});
+ const client=new Client({authStrategy:new LocalAuth({clientId,dataPath:path.join(process.cwd(),'.wwebjs_auth')}),authTimeoutMs:120000,puppeteer:{headless:true,executablePath:process.env.PUPPETEER_EXECUTABLE_PATH||undefined,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']}});
  let reconnectTimer=null;let initializing=false;let stopping=false;
  async function initialize(){if(initializing||stopping)return;initializing=true;try{await client.initialize();}catch(error){logger.error('WhatsApp initialization failed',{error});scheduleReconnect();}finally{initializing=false;}}
  function scheduleReconnect(){if(stopping||reconnectTimer)return;reconnectTimer=setTimeout(()=>{reconnectTimer=null;initialize();},reconnectDelayMs);}
