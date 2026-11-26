@@ -9,6 +9,11 @@ FROM node:20-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-certificates fonts-liberation && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
+# Pin the download cache to one fixed path used at both build time (this RUN,
+# still root) and run time (USER node below) — otherwise puppeteer downloads
+# to root's home cache dir here but looks in node's home cache dir at
+# startup, finds nothing there, and fails with "Could not find Chrome".
+ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 RUN npm ci --omit=dev
 COPY . .
 ENV NODE_ENV=production
