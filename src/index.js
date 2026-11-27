@@ -10,6 +10,15 @@ const {createMessageHandler}=require('./commands/message-handler');
 const {createWhatsAppBot}=require('./bot/client');
 const {createApp}=require('./app');
 const logger=require('./utilities/logger');
+// whatsapp-web.js registers raw page.on('framenavigated', async ...) handlers
+// internally; an evaluate() call racing a rapid double-navigation (e.g. during
+// logout) can reject with "Execution context was destroyed" with nothing of
+// ours in the call chain to catch it, which Node treats as fatal by default.
+// Log and keep running instead of losing the whole process (and its in-memory
+// rate limiter / in-flight dedup state) over a bug in that dependency — our
+// own 'disconnected' handler already triggers a clean reconnect for this.
+process.on('unhandledRejection',(reason)=>{logger.error('Unhandled promise rejection',{error:reason});});
+process.on('uncaughtException',(error)=>{logger.error('Uncaught exception',{error});});
 async function main(){
  const config=loadConfig();const pool=createPool(config.databaseUrl);await pool.query('SELECT 1');
  const botState={ready:false,authenticated:false};
