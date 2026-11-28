@@ -167,6 +167,23 @@ docker compose exec -T postgres pg_restore -U postgres -d whatsapp_codes_king --
 
 Back up the `whatsapp_auth` Docker volume using your host/volume backup system while the app container is stopped. Restoring only PostgreSQL does not restore the WhatsApp login; restoring only the session does not restore inventory. Encrypt backups and test restoration on a disposable host.
 
+### Automated daily backup
+
+`scripts/backup-db.sh` runs the same `pg_dump` into a timestamped file under `backups/` (gitignored) and prunes anything older than 14 days. Schedule it with cron on the VPS:
+
+```bash
+chmod +x scripts/backup-db.sh
+crontab -e
+```
+
+Add a line (adjust the path to where the repo lives on the VPS):
+
+```
+0 3 * * * /root/whatsapp-code-bot/scripts/backup-db.sh >> /root/whatsapp-code-bot/backups/backup.log 2>&1
+```
+
+This only protects against database corruption/mistakes on the same disk — it does not survive the VPS itself being lost or compromised. Periodically copy `backups/` to another machine (`scp`/`rsync`) for that.
+
 ## Troubleshooting
 
 - **QR expires:** restart the app and scan the newest QR promptly. If the account shows a stale linked device, remove it in WhatsApp and retry.
